@@ -2,24 +2,19 @@
 PROB = torus
 
 # Top directory of HDF5, or blank if using h5pcc
-HDF5_DIR =
+HDF5_DIR = /usr/local/opt/hdf5
 # Top directory of MPI, or blank if using mpicc
-# Highly recommended to use mpicc!
-MPI_DIR =
+MPI_DIR = /usr/local/opt/open-mpi
 # Top directory of GSL, or blank if installed to system
-GSL_DIR =
+GSL_DIR = /usr/local/opt/gsl
 # System /lib equivalent (can be /usr/lib, /lib64, /usr/lib64)
-# Can leave this blank if it's included automatically by GCC
 SYSTEM_LIBDIR = /lib64
 
 # Try pointing this to h5pcc on your machine, before hunting down libraries
-CC=h5pcc
-# Example CFLAGS for going fast with GCC
-CFLAGS = -std=gnu99 -O3 -march=native -mtune=native -flto -fopenmp -funroll-loops
+CC=/usr/local/opt/llvm/bin/clang
+# Example CFLAGS for going fast with Clang
+CFLAGS = -std=gnu99 -O3 -march=native -mtune=native -flto -fopenmp -mavx2 -funroll-loops -g
 MATH_LIB = -lm
-# ICC does not like -lm and uses different flags
-#CFLAGS = -xCORE-AVX2 -Ofast -fstrict-aliasing -Wall -Werror -ipo -qopenmp
-#MATH_LIB =
 
 # Name of the executable
 EXE = harm
@@ -50,10 +45,10 @@ GIT_VERSION := $(shell cd $(MAKEFILE_PATH); git describe --dirty --always --tags
 ## LINKING PARAMETERS ##
 
 LINK = $(CC)
-LDFLAGS = $(CFLAGS)
+LDFLAGS = $(CFLAGS) -L/usr/local/opt/llvm/lib -fopenmp
 
 HDF5_LIB = -lhdf5_hl -lhdf5
-MPI_LIB = #TODO these are hard to find due to ubiquity of mpicc
+MPI_LIB = -lmpi
 GSL_LIB = -lgsl -lgslcblas
 
 ## LOGIC FOR PATHS ##
@@ -72,9 +67,9 @@ HEAD := $(wildcard $(CORE_DIR)/*.h) $(wildcard $(PROB_DIR)/*.h)
 HEAD_ARC := $(addprefix $(ARC_DIR)/, $(notdir $(HEAD)))
 OBJ := $(addprefix $(ARC_DIR)/, $(notdir $(SRC:%.c=%.o)))
 
-INC = -I$(ARC_DIR)
+INC = -I$(ARC_DIR) -I/usr/local/opt/llvm/include -I$(HDF5_DIR)/include -I$(MPI_DIR)/include -I$(GSL_DIR)/include
 LIBDIR =
-LIB = $(MATH_LIB) $(GSL_LIB)
+LIB = $(MATH_LIB) $(GSL_LIB) $(HDF5_LIB) $(MPI_LIB)
 
 # Add HDF and MPI directories only if compiler doesn't
 ifneq ($(strip $(HDF5_DIR)),)

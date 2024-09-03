@@ -266,8 +266,9 @@ void		set_grid(struct GridGeom *G)
 				set_grid_loc(G, i, j, 0, FACE2);
 				set_grid_loc(G, i, j, 0, FACE3);
 
-			// Connection only needed at zone center
-				conn_func(G, i, j, 0);
+
+				GridIndices idx = {i, j, 0};
+				conn_func(G, idx);
 			}
 
 			// Following stolen from bhlight's dt_light calculation

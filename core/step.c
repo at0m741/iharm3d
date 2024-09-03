@@ -31,7 +31,9 @@ void step(struct GridGeom *G, struct FluidState *S)
 	memcpy(&(Ssave->P), &(S->P), sizeof(GridPrim));
 #else
 #pragma omp parallel for simd collapse(3)
-	PLOOP ZLOOPALL Ssave->P[ip][k][j][i] = S->P[ip][k][j][i];
+	PLOOP 
+		ZLOOPALL 
+			Ssave->P[ip][k][j][i] = S->P[ip][k][j][i];
 #endif
 	LOGN("Step %d", nstep);
 	FLAG("Start step");

@@ -8,7 +8,41 @@
 
 #include "decs.h"
 
-// Floor Codes: bit masks
+
+/*
+ * This file contains routines for ensuring the stability and physical realism 
+ * of the fluid state in a numerical simulation. These functions are crucial 
+ * for maintaining the integrity of the simulation when extreme conditions or 
+ * numerical errors could lead to non-physical results.
+ *
+ * The main functions included are:
+ *
+ * - `fixup`: Orchestrates the application of corrections to the fluid state, 
+ *   ensuring that all variables remain within physical and numerical limits.
+ *   This includes applying both ceilings (upper limits) and floors (lower limits) 
+ *   to various quantities, such as density, internal energy, and magnetization.
+ *
+ * - `fixup_ceiling`: Applies upper limits (ceilings) to fluid quantities, such 
+ *   as the maximum allowed Lorentz factor (`gamma`) and the maximum allowed total 
+ *   energy per unit mass (`KTOT`), to prevent non-physical conditions like 
+ *   relativistic runaway or unbounded cooling.
+ *
+ * - `fixup_floor`: Enforces lower limits (floors) on fluid quantities, ensuring 
+ *   that critical quantities like density and internal energy do not fall below 
+ *   physically meaningful values. This function also handles special cases, 
+ *   such as imposing magnetic floors to prevent over-magnetization.
+ *
+ * - `fixup_utoprim`: Handles the recovery of primitive variables from 
+ *   conserved variables in cases where numerical errors cause failure. 
+ *   If a cell's primitive variables cannot be correctly determined, it attempts 
+ *   to interpolate from neighboring cells to obtain a reasonable approximation.
+ *
+ * Debugging and logging functionality is included to track the number of corrections 
+ * applied, allowing for detailed monitoring of the simulation's stability. 
+ * The routines make extensive use of parallel processing (via OpenMP) to 
+ * maintain performance in large-scale simulations.
+ */
+
 #define HIT_FLOOR_GEOM_RHO 1
 #define HIT_FLOOR_GEOM_U 2
 #define HIT_FLOOR_B_RHO 4
@@ -17,7 +51,6 @@
 #define HIT_FLOOR_GAMMA 32
 #define HIT_FLOOR_KTOT 64
 
-// Point in m, around which to steepen floor prescription, eventually toward r^-3
 #define FLOOR_R_CHAR 10
 
 static struct FluidState *Stmp;
@@ -25,7 +58,6 @@ static struct FluidState *Stmp;
 void fixup_ceiling(struct GridGeom *G, struct FluidState *S, int i, int j, int k);
 void fixup_floor(struct GridGeom *G, struct FluidState *S, int i, int j, int k);
 
-// Apply floors to density, internal energy
 void fixup(struct GridGeom *G, struct FluidState *S)
 {
 	timer_start(TIMER_FIXUP);

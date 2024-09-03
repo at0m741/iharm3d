@@ -15,13 +15,18 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <gsl/gsl_linalg.h>
 #include <omp.h>
 
 // Required globally for pack.c function signatures
 #include <hdf5.h>
 
 #include "parameters.h"
-
+typedef struct {
+    int i;
+    int j;
+    int k;
+} GridIndices;
 #ifndef M_PI
 #define M_PI 3.14159265358979323846264338327
 #endif
@@ -474,8 +479,8 @@ void dump_grid(struct GridGeom *G);
 double gcon_func(double gcov[NDIM][NDIM], double gcon[NDIM][NDIM]);
 void get_gcov(struct GridGeom *G, int i, int j, int loc, double gcov[NDIM][NDIM]);
 void get_gcon(struct GridGeom *G, int i, int j, int loc, double gcon[NDIM][NDIM]);
-void conn_func(struct GridGeom *G, int i, int j, int k);
-void lower_grid(GridVector vcon, GridVector vcov, struct GridGeom *G, int i, int j, int k, int loc);
+void conn_func(struct GridGeom *G, GridIndices idx);
+void lower_grid(GridVector vcon, GridVector vcov, struct GridGeom *G, GridIndices idx, int loc);
 void raise_grid(GridVector vcov, GridVector vcon, struct GridGeom *G, int i, int j, int k, int loc);
 void   lower(double ucon[NDIM], double gcov[NDIM][NDIM], double ucov[NDIM]);
 void   raise(double ucov[NDIM], double gcon[NDIM][NDIM], double ucon[NDIM]);

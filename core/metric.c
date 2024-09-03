@@ -6,13 +6,63 @@
  *                                                                            *
  ******************************************************************************/
 
+
+/*
+ * This file contains a set of functions for handling various tensor operations 
+ * related to the metric and connection coefficients in a general relativistic 
+ * magnetohydrodynamics (GRMHD) simulation. These operations include raising and 
+ * lowering tensor indices, computing the determinant and inverse of matrices, 
+ * and calculating connection coefficients (Christoffel symbols) used in the simulation.
+ *
+ * Key functionalities in this file include:
+ *
+ * - **Metric Operations:**
+ *   - `gcon_func`: Computes the contravariant metric `gcon` from the covariant 
+ *     metric `gcov` by inverting the metric matrix. It returns the square root 
+ *     of the absolute value of the determinant of `gcov`.
+ *   - `get_gcov`, `get_gcon`: Functions to extract the covariant and contravariant 
+ *     metric components from the `GridGeom` structure.
+ *   - `lower` and `raise`: Functions to lower and raise the indices of a rank-1 
+ *     tensor using the provided covariant (`gcov`) or contravariant (`gcon`) metric.
+ *
+ * - **Connection Coefficients (Christoffel Symbols):**
+ *   - `conn_func`: Computes the connection coefficients \(\Gamma^{i}_{j,k}\) using 
+ *     finite differencing of the metric components. This function is crucial for 
+ *     calculating the geodesic equation and the evolution of fluid elements in 
+ *     curved spacetime.
+ *
+ * - **Tensor Index Manipulations:**
+ *   - `lower_grid`, `raise_grid`: Functions to lower or raise the indices of rank-1 
+ *     tensors (vectors) over the entire grid, using the metric stored in the `GridGeom` structure.
+ *   - `lower_grid_vec`: Lowers the indices of a grid of contravariant vectors to covariant ones 
+ *     across a specified range of grid points.
+ *   - `dot` and `dot_grid`: Compute the dot product of a contravariant vector with a covariant 
+ *     vector either for a single point (`dot`) or across the grid (`dot_grid`).
+ *
+ * - **Matrix Operations:**
+ *   - `invert`: Computes the inverse of a 4x4 matrix and returns its determinant. 
+ *     This function is essential for operations where the metric or other 4x4 matrices 
+ *     need to be inverted, such as when converting between covariant and contravariant 
+ *     components.
+ *   - `determinant`, `adjoint`, `MINOR`: Supporting functions for matrix operations, 
+ *     including calculation of the determinant, adjoint, and minors of a matrix. These 
+ *     are used within the `invert` function to compute the inverse of a matrix.
+ *
+ * The file uses the GSL (GNU Scientific Library) for some matrix operations (commented out) 
+ * as an alternative to the manual implementation of matrix inversion and determinant 
+ * calculation. These functions are optimized using inline definitions for performance 
+ * in a high-resolution simulation environment.
+ *
+ * Overall, the functions in this file are crucial for ensuring that the simulation 
+ * accurately models the effects of curved spacetime on the fluid and electromagnetic 
+ * fields, which is essential for realistic GRMHD simulations.
+ */
+
 #include "decs.h"
 
-#include <gsl/gsl_linalg.h>
 
-double MINOR(double m[16], int r0, int r1, int r2, int c0, int c1, int c2);
 void   adjoint(double m[16], double adjOut[16]);
-double determinant(double m[16]);
+
 
 inline double gcon_func(double gcov[NDIM][NDIM], double gcon[NDIM][NDIM])
 {
@@ -30,80 +80,101 @@ inline void get_gcon(struct GridGeom *G, int i, int j, int loc, double gcon[NDIM
 	DLOOP2 gcon[mu][nu] = G->gcon[loc][mu][nu][j][i];
 }
 
-// Calculate connection coefficient \Gamma^{i}_{j,k} = conn[..][i][j][k]
-inline void conn_func(struct GridGeom *G, int i, int j, int k)
+inline void calculate_partial_derivatives(struct GridGeom *G, double gh[NDIM][NDIM], 
+										double gl[NDIM][NDIM], int i, int j, int mu, int loc, double conn_out[NDIM][NDIM][NDIM])
 {
-	double tmp[NDIM][NDIM][NDIM];
-	double X[NDIM], Xh[NDIM], Xl[NDIM];
-	double gh[NDIM][NDIM];
-	double gl[NDIM][NDIM];
-	coord(i, j, k, CENT, X);
+    for (int lam = 0; lam < NDIM; lam++)
+    {
+        for (int nu = 0; nu < NDIM; nu++)
+        {
+            conn_out[lam][nu][mu] = (gh[lam][nu] - gl[lam][nu]) / (2 * DELTA);
+        }
+    }
+}
 
-	for (int mu = 0; mu < NDIM; mu++)
+
+inline void conn_func(struct GridGeom *G, GridIndices idx)
+{
+    double tmp[NDIM][NDIM][NDIM];
+    double X[NDIM];
+    double gh[NDIM][NDIM], gl[NDIM][NDIM];
+    int i = idx.i, j = idx.j, k = idx.k;
+
+    coord(i, j, k, CENT, X);
+
+    for (int mu = 0; mu < NDIM; mu++)
+    {
+        double Xh[NDIM], Xl[NDIM];
+        memcpy(Xh, X, sizeof(X));  // Copier X dans Xh
+        memcpy(Xl, X, sizeof(X));  // Copier X dans Xl
+
+        Xh[mu] += DELTA;
+        Xl[mu] -= DELTA;
+
+        gcov_func(Xh, gh);
+        gcov_func(Xl, gl);
+
+        for (int lam = 0; lam < NDIM; lam++)
+        {
+            for (int nu = 0; nu < NDIM; nu++)
+            {
+                double diff = (gh[lam][nu] - gl[lam][nu]) / (2 * DELTA);
+                G->conn[lam][nu][mu][j][i] = diff;
+            }
+        }
+    }
+
+    // Réorganiser pour trouver \Gamma_{lam nu mu}
+    for (int lam = 0; lam < NDIM; lam++)
+    {
+        for (int nu = 0; nu < NDIM; nu++)
+        {
+            for (int mu = 0; mu < NDIM; mu++)
+            {
+                tmp[lam][nu][mu] = 0.5 * (G->conn[nu][lam][mu][j][i] + G->conn[mu][lam][nu][j][i] - G->conn[mu][nu][lam][j][i]);
+            }
+        }
+    }
+
+    // Élever l'indice pour obtenir \Gamma^lam_{nu mu}
+    for (int lam = 0; lam < NDIM; lam++)
+    {
+        for (int nu = 0; nu < NDIM; nu++)
+        {
+            for (int mu = 0; mu < NDIM; mu++)
+            {
+                double sum = 0.0;
+                for (int kap = 0; kap < NDIM; kap++)
+                {
+                    sum += G->gcon[CENT][lam][kap][j][i] * tmp[kap][nu][mu];
+                }
+                G->conn[lam][nu][mu][j][i] = sum;
+            }
+        }
+    }
+	if (G->gcon[CENT][0][0][j][i] < 0.)
 	{
-		for (int kap = 0; kap < NDIM; kap++)
-		{
-			Xh[kap] = X[kap];
-		}
-		for (int kap = 0; kap < NDIM; kap++)
-		{
-			Xl[kap] = X[kap];
-		}
-		Xh[mu] += DELTA;
-		Xl[mu] -= DELTA;
-		gcov_func(Xh, gh);
-		gcov_func(Xl, gl);
-
-		for (int lam = 0; lam < NDIM; lam++)
-		{
-			for (int nu = 0; nu < NDIM; nu++)
-			{
-				G->conn[lam][nu][mu][j][i] = (gh[lam][nu] - gl[lam][nu]) / (Xh[mu] - Xl[mu]);
-			}
-		}
-	}
-
-	// Rearrange to find \Gamma_{lam nu mu}
-	for (int lam = 0; lam < NDIM; lam++)
-	{
-		for (int nu = 0; nu < NDIM; nu++)
-		{
-			for (int mu = 0; mu < NDIM; mu++)
-			{
-				tmp[lam][nu][mu] = 0.5 * (G->conn[nu][lam][mu][j][i] + G->conn[mu][lam][nu][j][i] - G->conn[mu][nu][lam][j][i]);
-			}
-		}
-	}
-
-	// now mu nu kap
-
-	// Raise index to get \Gamma^lam_{nu mu}
-	for (int lam = 0; lam < NDIM; lam++)
-	{
-		for (int nu = 0; nu < NDIM; nu++)
-		{
-			for (int mu = 0; mu < NDIM; mu++)
-			{
-				G->conn[lam][nu][mu][j][i] = 0.;
-				for (int kap = 0; kap < NDIM; kap++)
-					G->conn[lam][nu][mu][j][i] += G->gcon[CENT][lam][kap][j][i] * tmp[kap][nu][mu];
-			}
-		}
+		fprintf(stderr, "gcon[0][0] < 0\n");
 	}
 }
 
-// Lower a contravariant rank-1 tensor to a covariant one
-inline void lower_grid(GridVector vcon, GridVector vcov, struct GridGeom *G, int i, int j, int k, int loc)
+inline void lower_grid(GridVector vcon, GridVector vcov, struct GridGeom *G, GridIndices idx, int loc)
 {
-	for (int mu = 0; mu < NDIM; mu++)
-	{
-		vcov[mu][k][j][i] = 0.;
-		for (int nu = 0; nu < NDIM; nu++)
-		{
-			vcov[mu][k][j][i] += G->gcov[loc][mu][nu][j][i] * vcon[nu][k][j][i];
-		}
-	}
+    int i = idx.i;
+    int j = idx.j;
+    int k = idx.k;
+    
+    for (int mu = 0; mu < NDIM; mu++)
+    {
+        vcov[mu][k][j][i] = 0.;
+        for (int nu = 0; nu < NDIM; nu++)
+        {
+            vcov[mu][k][j][i] += G->gcov[loc][mu][nu][j][i] * 
+								vcon[nu][k][j][i];
+        }
+    }
 }
+
 
 // Lower the grid of contravariant rank-1 tensors to covariant ones
 void lower_grid_vec(GridVector vcon, GridVector vcov, struct GridGeom *G, int kstart, int kstop, int jstart, int jstop, int istart, int istop, int loc)
@@ -195,9 +266,35 @@ inline double dot(double vcon[NDIM], double vcov[NDIM])
 //  return gsl_linalg_LU_det(&mat.matrix, s);
 //}
 
+
+/*
+ * The `MINOR` function calculates the minor of a 3x3 submatrix within a 4x4 matrix.
+ * 
+ * In linear algebra, the minor of a matrix element is the determinant of the 
+ * smaller matrix formed by removing the row and column containing that element.
+ * The `MINOR` function is used here to compute the determinant of a 3x3 submatrix 
+ * that excludes a specific row and column from the original 4x4 matrix.
+ * 
+ * Parameters:
+ * - `m`: A 4x4 matrix represented as a flat array of 16 elements.
+ * - `r0`, `r1`, `r2`: The row indices of the 3x3 submatrix within the 4x4 matrix.
+ * - `c0`, `c1`, `c2`: The column indices of the 3x3 submatrix within the 4x4 matrix.
+ * 
+ * The function computes the determinant of the 3x3 submatrix using the standard 
+ * cofactor expansion method. The result is used in the calculation of the adjoint 
+ * matrix, which is necessary for finding the inverse of the original 4x4 matrix.
+ * 
+ * Return value:
+ * - The function returns the determinant of the specified 3x3 submatrix.
+ */
+
 inline double MINOR(double m[16], int r0, int r1, int r2, int c0, int c1, int c2)
 {
-	return m[4 * r0 + c0] * (m[4 * r1 + c1] * m[4 * r2 + c2] - m[4 * r2 + c1] * m[4 * r1 + c2]) - m[4 * r0 + c1] * (m[4 * r1 + c0] * m[4 * r2 + c2] - m[4 * r2 + c0] * m[4 * r1 + c2]) + m[4 * r0 + c2] * (m[4 * r1 + c0] * m[4 * r2 + c1] - m[4 * r2 + c0] * m[4 * r1 + c1]);
+	return m[4 * r0 + c0] * (m[4 * r1 + c1] * m[4 * r2 + c2] -
+		m[4 * r2 + c1] * m[4 * r1 + c2]) - m[4 * r0 + c1] * 
+		(m[4 * r1 + c0] * m[4 * r2 + c2] - m[4 * r2 + c0] * 
+		m[4 * r1 + c2]) + m[4 * r0 + c2] * (m[4 * r1 + c0] * 
+		m[4 * r2 + c1] - m[4 * r2 + c0] * m[4 * r1 + c1]);
 }
 
 inline void adjoint(double m[16], double adjOut[16])
@@ -225,7 +322,10 @@ inline void adjoint(double m[16], double adjOut[16])
 
 inline double determinant(double m[16])
 {
-	return m[0] * MINOR(m, 1, 2, 3, 1, 2, 3) - m[1] * MINOR(m, 1, 2, 3, 0, 2, 3) + m[2] * MINOR(m, 1, 2, 3, 0, 1, 3) - m[3] * MINOR(m, 1, 2, 3, 0, 1, 2);
+	return m[0] * MINOR(m, 1, 2, 3, 1, 2, 3) - m[1] * 
+				MINOR(m, 1, 2, 3, 0, 2, 3) + m[2] * 
+				MINOR(m, 1, 2, 3, 0, 1, 3) - m[3] * 
+				MINOR(m, 1, 2, 3, 0, 1, 2);
 }
 
 inline double invert(double *m, double *invOut)
