@@ -277,23 +277,33 @@ void get_state_vec(struct GridGeom *G, struct FluidState *S, int loc, int kstart
 // TODO this is a primary candidate for splitting/vectorizing
 inline void compute_covariant_contravariant(struct GridGeom *G, int i, int j, int k, int loc, int dir, double *Acov, double *Bcov, double *Acon, double *Bcon)
 {
-    for (int mu = 0; mu < NDIM; mu++) {
-        Acov[mu] = 0.0;
-        Bcov[mu] = 0.0;
-        Acon[mu] = 0.0;
-        Bcon[mu] = 0.0;
-    }
+    // Initialisation des vecteurs
+    Acov[0] = Acov[1] = Acov[2] = Acov[3] = 0.0;
+    Bcov[0] = Bcov[1] = Bcov[2] = Bcov[3] = 0.0;
+    Acon[0] = Acon[1] = Acon[2] = Acon[3] = 0.0;
+    Bcon[0] = Bcon[1] = Bcon[2] = Bcon[3] = 0.0;
 
     Acov[dir] = 1.0;
     Bcov[0] = 1.0;
 
+    _mm_prefetch((const void *)&G->gcon[loc][0][0][j][i], _MM_HINT_T0);
+    _mm_prefetch((const void *)&G->gcon[loc][1][0][j][i], _MM_HINT_T0);
+    _mm_prefetch((const void *)&G->gcon[loc][2][0][j][i], _MM_HINT_T0);
+    _mm_prefetch((const void *)&G->gcon[loc][3][0][j][i], _MM_HINT_T0);
+	#pragma omp simd
     for (int mu = 0; mu < NDIM; mu++) {
-        for (int nu = 0; nu < NDIM; nu++) {
-            Acon[mu] += G->gcon[loc][mu][nu][j][i] * Acov[nu];
-            Bcon[mu] += G->gcon[loc][mu][nu][j][i] * Bcov[nu];
-        }
+        Acon[mu] += G->gcon[loc][mu][0][j][i] * Acov[0];
+        Acon[mu] += G->gcon[loc][mu][1][j][i] * Acov[1];
+        Acon[mu] += G->gcon[loc][mu][2][j][i] * Acov[2];
+        Acon[mu] += G->gcon[loc][mu][3][j][i] * Acov[3];
+
+        Bcon[mu] += G->gcon[loc][mu][0][j][i] * Bcov[0];
+        Bcon[mu] += G->gcon[loc][mu][1][j][i] * Bcov[1];
+        Bcon[mu] += G->gcon[loc][mu][2][j][i] * Bcov[2];
+        Bcon[mu] += G->gcon[loc][mu][3][j][i] * Bcov[3];
     }
 }
+
 
 
 inline void mhd_vchar(struct GridGeom *G, struct FluidState *S, int i, int j, int k, int loc, int dir, GridDouble cmax, GridDouble cmin)
@@ -317,7 +327,7 @@ inline void mhd_vchar(struct GridGeom *G, struct FluidState *S, int i, int j, in
     Asq = dot(Acon, Acov);
     Bsq = dot(Bcon, Bcov);
     Au = Bu = 0.0;
-
+	#pragma omp simd
     for (int mu = 0; mu < NDIM; mu++) {
         Au += Acov[mu] * S->ucon[mu][k][j][i];
         Bu += Bcov[mu] * S->ucon[mu][k][j][i];
@@ -346,72 +356,65 @@ inline void mhd_vchar(struct GridGeom *G, struct FluidState *S, int i, int j, in
 inline void get_fluid_source(struct GridGeom *G, struct FluidState *S, GridPrim *dU)
 {
 #if WIND_TERM
-	static struct FluidState *dS;
-	static int                firstc = 1;
-	if (firstc)
-	{
-		dS = calloc(1, sizeof(struct FluidState));
-		firstc = 0;
-	}
+    static struct FluidState *dS;
+    static int firstc = 1;
+    if (firstc)
+    {
+        dS = calloc(1, sizeof(struct FluidState));
+        firstc = 0;
+    }
 #endif
 
 #pragma omp parallel for collapse(3)
-	ZLOOP
-	{
-		double mhd[NDIM][NDIM];
+    ZLOOP
+    {
+        double mhd[NDIM][NDIM];
+		#pragma omp simd
+        DLOOP1
+            mhd_calc(S, i, j, k, mu, mhd[mu]);
 
-		DLOOP1 mhd_calc(S, i, j, k, mu, mhd[mu]); // TODO make an mhd_calc_vec?
-
-		// Contract mhd stress tensor with connection
-		// TODO this is scattered memory access.  Precompute mu,nu sums
-		PLOOP(*dU)[ip][k][j][i] = 0.;
-		DLOOP2
+        PLOOP(*dU)[ip][k][j][i] = 0.0;
+		
+		/*
+		* unrolling the loop for better performance
+		* the loop is unrolled for the innermost loop
+		* we can now use the simd pragma to vectorize the loop
+		*/
+		_mm_prefetch((const void *)&G->conn[0][0][0][j][i], _MM_HINT_T0);	
+		#pragma omp simd
+        DLOOP2
 		{
-			for (int gam = 0; gam < NDIM; gam++)
-				(*dU)[UU + gam][k][j][i] += mhd[mu][nu] * G->conn[nu][gam][mu][j][i];
+			(*dU)[UU + 0][k][j][i] += mhd[mu][nu] * G->conn[nu][0][mu][j][i];
+			(*dU)[UU + 1][k][j][i] += mhd[mu][nu] * G->conn[nu][1][mu][j][i];
+			(*dU)[UU + 2][k][j][i] += mhd[mu][nu] * G->conn[nu][2][mu][j][i];
+			(*dU)[UU + 3][k][j][i] += mhd[mu][nu] * G->conn[nu][3][mu][j][i];
 		}
+        PLOOP(*dU)[ip][k][j][i] *= G->gdet[CENT][j][i];
+    }
 
-		PLOOP(*dU)[ip][k][j][i] *= G->gdet[CENT][j][i];
-	}
-
-	// Add a small "wind" source term in RHO,UU
 #if WIND_TERM
-#pragma omp parallel for simd collapse(2)
-	ZLOOP
-	{
-		// Stolen shamelessly from iharm2d_v3
+	#pragma omp parallel for simd collapse(2)
+    ZLOOP
+    {
+        double X[NDIM];
+        coord(i, j, k, CENT, X);
+        double r, th;
+        bl_coord(X, &r, &th);
+        double cth = cos(th);
 
-		/* need coordinates to evaluate particle addtn rate */
-		double X[NDIM];
-		coord(i, j, k, CENT, X);
-		double r, th;
-		bl_coord(X, &r, &th);
-		double cth = cos(th);
+        double drhopdt = 2.e-4 * pow(cth, 4) / pow(1.0 + r * r, 2);
 
-		/* here is the rate at which we're adding particles */
-		/* this function is designed to concentrate effect in the
-		 funnel in black hole evolutions */
-		double drhopdt = 2.e-4 * cth * cth * cth * cth / pow(1. + r * r, 2);
+        dS->P[RHO][k][j][i] = drhopdt;
+        double Tp = 10.0;
+        dS->P[UU][k][j][i] = drhopdt * Tp * 3.0;
+    }
 
-		dS->P[RHO][k][j][i] = drhopdt;
+    get_state_vec(G, dS, CENT, 0, N3 - 1, 0, N2 - 1, 0, N1 - 1);
+    prim_to_flux_vec(G, dS, 0, CENT, 0, N3 - 1, 0, N2 - 1, 0, N1 - 1, dS->U);
 
-		double Tp = 10.; /* temp, in units of c^2, of new plasma */
-		dS->P[UU][k][j][i] = drhopdt * Tp * 3.;
-
-		/* Leave P[U{1,2,3}]=0 to add in particles in normal observer frame */
-		/* Likewise leave P[BN]=0 */
-	}
-
-	/* add in plasma to the T^t_a component of the stress-energy tensor */
-	/* notice that U already contains a factor of sqrt{-g} */
-	get_state_vec(G, dS, CENT, 0, N3 - 1, 0, N2 - 1, 0, N1 - 1);
-	prim_to_flux_vec(G, dS, 0, CENT, 0, N3 - 1, 0, N2 - 1, 0, N1 - 1, dS->U);
-
-#pragma omp parallel for simd collapse(3)
-	PLOOP ZLOOP
-	{
-		(*dU)[ip][k][j][i] += dS->U[ip][k][j][i];
-	}
+	#pragma omp parallel for simd collapse(3)
+    PLOOP ZLOOP
+        (*dU)[ip][k][j][i] += dS->U[ip][k][j][i];
 #endif
 }
 
@@ -420,9 +423,7 @@ inline double bsq_calc(struct FluidState *S, int i, int j, int k)
 {
 	double bsq = 0.;
 	DLOOP1
-	{
 		bsq += S->bcon[mu][k][j][i] * S->bcov[mu][k][j][i];
-	}
 
 	return bsq;
 }

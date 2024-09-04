@@ -181,10 +181,10 @@ int main(int argc, char *argv[])
 			dt = tf - t;
 		}
 
-		if (mpi_io_proc())
-		{
-			fprintf(stdout, "t = %10.5g dt = %10.5g n = %8d\n", t, dt, nstep);
-		}
+		/* if (mpi_io_proc()) */
+		/* { */
+		/* 	fprintf(stdout, "t = %10.5g dt = %10.5g n = %8d\n", t, dt, nstep); */
+		/* } */
 
 		// File I/O with set frequencies
 		if (t < tf)

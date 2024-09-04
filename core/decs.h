@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
+#include <immintrin.h>
 #include <gsl/gsl_linalg.h>
 #include <omp.h>
 
@@ -532,6 +532,7 @@ void ucon_calc(struct GridGeom *G, struct FluidState *S, int i, int j, int k, in
 double mhd_gamma_calc(struct GridGeom *G, struct FluidState *S, int i, int j, int k, int loc);
 void mhd_vchar(struct GridGeom *G, struct FluidState *Sr, int i, int j, int k, int loc, int dir, GridDouble cmax, GridDouble cmin);
 
+void compute_covariant_contravariant(struct GridGeom *G, int i, int j, int k, int loc, int dir, double *Acov, double *Bcov, double *Acon, double *Bcon);
 // problem.c
 void set_problem_params();
 void init(struct GridGeom *G, struct FluidState *S);

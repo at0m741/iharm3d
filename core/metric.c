@@ -84,13 +84,10 @@ inline void calculate_partial_derivatives(struct GridGeom *G, double gh[NDIM][ND
 										double gl[NDIM][NDIM], int i, int j, int mu, int loc, double conn_out[NDIM][NDIM][NDIM])
 {
     for (int lam = 0; lam < NDIM; lam++)
-    {
         for (int nu = 0; nu < NDIM; nu++)
-        {
             conn_out[lam][nu][mu] = (gh[lam][nu] - gl[lam][nu]) / (2 * DELTA);
-        }
-    }
 }
+
 
 
 inline void conn_func(struct GridGeom *G, GridIndices idx)
@@ -105,8 +102,8 @@ inline void conn_func(struct GridGeom *G, GridIndices idx)
     for (int mu = 0; mu < NDIM; mu++)
     {
         double Xh[NDIM], Xl[NDIM];
-        memcpy(Xh, X, sizeof(X));  // Copier X dans Xh
-        memcpy(Xl, X, sizeof(X));  // Copier X dans Xl
+        memcpy(Xh, X, sizeof(X));  
+        memcpy(Xl, X, sizeof(X));
 
         Xh[mu] += DELTA;
         Xl[mu] -= DELTA;
@@ -114,48 +111,38 @@ inline void conn_func(struct GridGeom *G, GridIndices idx)
         gcov_func(Xh, gh);
         gcov_func(Xl, gl);
 
+        #pragma omp simd collapse(2)
         for (int lam = 0; lam < NDIM; lam++)
-        {
             for (int nu = 0; nu < NDIM; nu++)
             {
-                double diff = (gh[lam][nu] - gl[lam][nu]) / (2 * DELTA);
-                G->conn[lam][nu][mu][j][i] = diff;
+                G->conn[lam][nu][mu][j][i] = (gh[lam][nu] - gl[lam][nu]) / (2 * DELTA);
+				printf("G->conn[%d][%d][%d][%d][%d] = %f\n", lam, nu, mu, j, i, G->conn[lam][nu][mu][j][i]);
             }
-        }
     }
-
-    // Réorganiser pour trouver \Gamma_{lam nu mu}
+    #pragma omp simd collapse(3)
     for (int lam = 0; lam < NDIM; lam++)
-    {
         for (int nu = 0; nu < NDIM; nu++)
-        {
             for (int mu = 0; mu < NDIM; mu++)
             {
-                tmp[lam][nu][mu] = 0.5 * (G->conn[nu][lam][mu][j][i] + G->conn[mu][lam][nu][j][i] - G->conn[mu][nu][lam][j][i]);
+                tmp[lam][nu][mu] = 0.5 * (
+                    G->conn[nu][lam][mu][j][i] + 
+                    G->conn[mu][lam][nu][j][i] - 
+                    G->conn[mu][nu][lam][j][i]);
             }
-        }
-    }
 
-    // Élever l'indice pour obtenir \Gamma^lam_{nu mu}
+	#pragma omp simd collapse(3)
     for (int lam = 0; lam < NDIM; lam++)
-    {
         for (int nu = 0; nu < NDIM; nu++)
-        {
             for (int mu = 0; mu < NDIM; mu++)
             {
                 double sum = 0.0;
                 for (int kap = 0; kap < NDIM; kap++)
-                {
                     sum += G->gcon[CENT][lam][kap][j][i] * tmp[kap][nu][mu];
-                }
                 G->conn[lam][nu][mu][j][i] = sum;
             }
-        }
-    }
-	if (G->gcon[CENT][0][0][j][i] < 0.)
-	{
-		fprintf(stderr, "gcon[0][0] < 0\n");
-	}
+
+    if (G->gcon[CENT][0][0][j][i] < 0.0)
+        fprintf(stderr, "gcon[0][0] < 0\n");
 }
 
 inline void lower_grid(GridVector vcon, GridVector vcov, struct GridGeom *G, GridIndices idx, int loc)
@@ -168,10 +155,8 @@ inline void lower_grid(GridVector vcon, GridVector vcov, struct GridGeom *G, Gri
     {
         vcov[mu][k][j][i] = 0.;
         for (int nu = 0; nu < NDIM; nu++)
-        {
             vcov[mu][k][j][i] += G->gcov[loc][mu][nu][j][i] * 
 								vcon[nu][k][j][i];
-        }
     }
 }
 
@@ -179,13 +164,13 @@ inline void lower_grid(GridVector vcon, GridVector vcov, struct GridGeom *G, Gri
 // Lower the grid of contravariant rank-1 tensors to covariant ones
 void lower_grid_vec(GridVector vcon, GridVector vcov, struct GridGeom *G, int kstart, int kstop, int jstart, int jstop, int istart, int istop, int loc)
 {
-#pragma omp parallel for simd collapse(3)
+	#pragma omp parallel for simd collapse(3)
 	DLOOP1
 	{
 		ZSLOOP(kstart, kstop, jstart, jstop, istart, istop)
 		vcov[mu][k][j][i] = 0.;
 	}
-#pragma omp parallel for simd collapse(4)
+	#pragma omp parallel for simd collapse(4)
 	DLOOP2
 	{
 		ZSLOOP(kstart, kstop, jstart, jstop, istart, istop)
@@ -195,13 +180,12 @@ void lower_grid_vec(GridVector vcon, GridVector vcov, struct GridGeom *G, int ks
 
 inline void raise_grid(GridVector vcov, GridVector vcon, struct GridGeom *G, int i, int j, int k, int loc)
 {
+	#pragma omp simd
 	for (int mu = 0; mu < NDIM; mu++)
 	{
 		vcon[mu][k][j][i] = 0.;
 		for (int nu = 0; nu < NDIM; nu++)
-		{
 			vcon[mu][k][j][i] += G->gcon[loc][mu][nu][j][i] * vcov[nu][k][j][i];
-		}
 	}
 }
 
@@ -209,13 +193,12 @@ inline void raise_grid(GridVector vcov, GridVector vcon, struct GridGeom *G, int
 // Utoprim, Wp_func And while you're at it revise out get_state
 inline void lower(double ucon[NDIM], double gcov[NDIM][NDIM], double ucov[NDIM])
 {
+	#pragma omp simd
 	for (int mu = 0; mu < NDIM; mu++)
 	{
 		ucov[mu] = 0.;
 		for (int nu = 0; nu < NDIM; nu++)
-		{
 			ucov[mu] += gcov[mu][nu] * ucon[nu];
-		}
 	}
 }
 
@@ -251,21 +234,6 @@ inline double dot(double vcon[NDIM], double vcov[NDIM])
 	}
 	return dot;
 }
-
-// TODO debug this GSL version to save lines?
-// double invert(double *m, double *inv) {
-//  gsl_matrix_view mat = gsl_matrix_view_array(m, 4, 4);
-//  gsl_matrix_view inv_mat = gsl_matrix_view_array(inv, 4, 4);
-//  gsl_permutation * p = gsl_permutation_alloc(4);
-//  int s;
-//
-//  gsl_linalg_LU_decomp(&mat.matrix, p, &s);
-//  gsl_linalg_LU_invert(&mat.matrix, p, &inv_mat.matrix);
-//
-//  gsl_permutation_free(p);
-//  return gsl_linalg_LU_det(&mat.matrix, s);
-//}
-
 
 /*
  * The `MINOR` function calculates the minor of a 3x3 submatrix within a 4x4 matrix.
